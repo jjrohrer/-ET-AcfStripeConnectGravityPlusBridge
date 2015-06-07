@@ -4,16 +4,16 @@
 if( ! class_exists('acf_field_et_stripe_connect') ) :
 
 class acf_field_et_stripe_connect extends acf_field {
-	
-	
+
+
 	/*
 	*  __construct
 	*
 	*  This function will setup the field type data
 	*/
-	
+
 	function __construct() {
-		
+
 		// vars
 		$this->name = 'et_stripe_connect';
 		$this->label = __("Stripe Connect Button",'acf');
@@ -22,12 +22,77 @@ class acf_field_et_stripe_connect extends acf_field {
 			'et_stripe_connect'	=> '',
 			'hide_label' => 'no',
 		);
-		
-		
+
+        add_action( 'parse_request', array( $this, 'parse_request' ) );
+
 		// do not delete!
     	parent::__construct();
 	}
 
+    public function parse_request($query) {
+        if (!empty($query->query_vars['page']) && $query->query_vars['page'] == 'etac_process_stripe_connect_request') {
+            // coming home from stripe connect!
+            $this->_finish_stripe_connect_account_connection($query);
+        }
+        return;
+    }
+    private function _finish_stripe_connect_account_connection($query) {
+        $settings = get_option( 'gfp_stripe_settings' );
+        if ( isset( $_GET[ 'code' ] ) ) {
+            $code = $_GET[ 'code' ];
+
+//            $state = explode( ' ', $_GET[ 'state' ] );
+//            $user  = get_user_by( 'id', $state[ 0 ] );
+//            if ( ! $user ) {
+//                GFP_Stripe::log_error( 'User ID ' . $state[ 0 ] . ' does not exist.' );
+//
+//                wp_redirect('etac_process_stripe_connect_error');# wp_redirect( $settings[ 'stripe_connect_redirect_error' ] );
+//                exit;
+//            }
+
+            #$user_id = $user->ID;
+
+            $access_token_url          = "https://connect.stripe.com/oauth/token";
+            #$mode                      = empty( $state[ 1 ] ) ? false : $state[ 1 ];
+            $access_token_request_body = array(
+                'grant_type'    => 'authorization_code',
+                'code'          => $code,
+                'client_secret' => STRIPE_SECRET_KEY, # GFP_Stripe::get_api_key( 'secret', $mode )#'client_secret' => GFP_Stripe::get_api_key( 'secret', $mode )
+            );
+            $url                       = $access_token_url . '?' . http_build_query( $access_token_request_body );
+            $access_token_request      = wp_remote_post( $url );
+            $access_token_response     = json_decode( wp_remote_retrieve_body( $access_token_request ), true );
+
+            if ( array_key_exists( 'error', $access_token_response ) ) {
+
+                $error =  $access_token_response[ 'error' ] . '/' . $access_token_response[ 'error_description' ];#$error = $user_id . '/' . $access_token_response[ 'error' ] . '/' . $access_token_response[ 'error_description' ];
+                #GFP_Stripe::log_error( $error );
+                wp_redirect('/stripe_connect_failure');#wp_redirect( $settings[ 'stripe_connect_redirect_error' ] );
+                exit;
+            }
+
+            $stripe_connect_info = array(
+                'access_token'    => $access_token_response[ 'access_token' ],
+                'publishable_key' => $access_token_response[ 'stripe_publishable_key' ],
+                'account_id'      => $access_token_response[ 'stripe_user_id' ],
+                'refresh_token'   => $access_token_response[ 'refresh_token' ]
+            );
+            // Ideally, this should be stored with the acf field group, but extra work and not known use case yet
+            // we'll store just one for now
+            update_option('options_etac_stripe_connect',$stripe_connect_info);
+            #add_user_meta( $user_id, '_gfp_stripe_connect', $stripe_connect_info, true );
+            #add_user_meta( $user_id, '_gfp_stripe_account_id', $access_token_response[ 'stripe_user_id' ], true );
+
+            wp_redirect( 'stripe_connect_success' );#wp_redirect( $settings[ 'stripe_connect_redirect_success' ] );
+            exit;
+        } else if ( isset( $_GET[ 'error' ] ) ) {
+
+            $error = $_GET[ 'state' ] . '/' . $_GET[ 'error' ] . '/' . $_GET[ 'error_description' ];
+            GFP_Stripe::log_error( $error );
+            wp_redirect('/stripe_connect_failure');#wp_redirect( $settings[ 'stripe_connect_redirect_error' ] );
+            exit;
+        }
+    }
     /*
     *  load_field()
     *  jjr - more like getting the label
@@ -54,7 +119,7 @@ class acf_field_et_stripe_connect extends acf_field {
         #echo "(Your Stripe connect button should go here.)";
         $stringVal = $field['et_stripe_connect'];
 
-        $stripeConnectButton = $this->shortcode_stripe_connect(['allow_updates'=>1]);
+        $stripeConnectButton = $this->generate_stripe_button($field);
         echo "
         $stringVal
         <p>
@@ -63,12 +128,12 @@ class acf_field_et_stripe_connect extends acf_field {
         return;
 
 	}
-	
+
 	/*
 	*  field_group_admin_head()
 	*
 	*/
-	
+
 	function field_group_admin_head() {
 		?>
 <style>
@@ -82,26 +147,26 @@ class acf_field_et_stripe_connect extends acf_field {
 	/*
 	*  field_group_admin_enqueue_scripts()
 	*/
-	
+
 	function field_group_admin_enqueue_scripts() {
-	
-		
+
+
 		$dir = plugin_dir_url( __FILE__ );
-		
+
 		// register & include JS
 		wp_register_script( 'acf-input-enhanced_message', "{$dir}js/input.js", array(), false, true );
 		wp_enqueue_script('acf-input-enhanced_message');
-		
+
 	}
 
 
-	
+
 	/*
 	*  render_field_settings()
 	*/
-	
+
 	function render_field_settings( $field ) {
-		
+
 		// Message
 		acf_render_field_setting( $field, array(
 			'label'			=> __('Instructions','acf'),
@@ -121,7 +186,7 @@ class acf_field_et_stripe_connect extends acf_field {
 				'no' => __('No'),
 			)
 		));
-		
+
 	}
 
     /*
@@ -141,31 +206,34 @@ class acf_field_et_stripe_connect extends acf_field {
      * think better than hacking the core GFP_Stripe_Connect file.
      *
      */
-    public function shortcode_stripe_connect( $attr, $content = null ) {
+    public function generate_stripe_button( $field) {
         $output = '';
-        $user_id = get_current_user_id();
+        #$user_id = get_current_user_id();
+        $allowUpdates = true;// <-- INPUT
 
-        global $stripe_connect;
-        if (isset($stripe_connect)) {
-            //print "Goodness";
-        } else {
-            echo "This only works with Gravity + Stripe, with Stripe Connect.  If you have this plugin, please enable it, otherwise visit https://gravityplus.pro.";
-        }
-
-
-        if ( 0 === $user_id ) {
+        if ( !is_user_logged_in() ) {
             $output .= "You must be logged in to view this content.";
+            #return '';
+        } else if (! current_user_can('etac_be_cfo')) {
+            #return '';
+            $output .= "You must have CFO like capabilities to view this field.";
 
         } else {
-            $allowUpdates = (isset($attr['allow_updates']) && ($attr['allow_updates'] == 'true' || $attr['allow_updates'] == 1)) ? true : false;
+            #global $stripe_connect;
+            #$allowUpdates = (isset($attr['allow_updates']) && ($attr['allow_updates'] == 'true' || $attr['allow_updates'] == 1)) ? true : false;
             $firstTime = false;
-            if ( ! $stripe_connect->get_stripe_connect_vendor_details( $user_id )  ) {
+
+
+            if ( empty(get_option('options_etac_stripe_connect') ) ) {
                 $firstTime = true;
             }
 
             if ($firstTime || $allowUpdates) {
-                $url = $this->build_stripe_connect_url( $user_id );
-                wp_enqueue_style( 'gfp_stripe_connect_button', trailingslashit( GFP_STRIPE_CONNECT_URL ) . 'includes/button.css' );
+                $url = $this->build_stripe_connect_url(  );
+                #print "<br>".__FILE__.__LINE__.__METHOD__."<br> $url";
+
+                #wp_enqueue_style( 'gfp_stripe_connect_button', trailingslashit( GFP_STRIPE_CONNECT_URL ) . 'includes/button.css' );
+                wp_enqueue_style( 'jStripeConnectButton', plugin_dir_url(__FILE__). '/css/jStripeConnectButton.css' );
                 $htmlButton = '<a href="' . $url . '" class="stripe-connect"><span>Connect with Stripe</span></a>';;
                 if ($firstTime) {
                     $output .= $htmlButton;
@@ -195,39 +263,20 @@ EOD;
         return $output;
     }
 
-    // ============= Exact Copies from GFP_Stripe_Connect -BEGIN- ======================================================
     // only here because is private in GFP_Stripe_Connect
-    private function build_stripe_connect_url( $user_id, $mode = false ) {
+    // FYI: url and button docs: https://stripe.com/docs/connect/standalone-accounts
+    // https://connect.stripe.com/oauth/authorize?response_type=code&client_id=ca_3tYprjqNoe2xqJAhuqa498MiZuVGXyIG&scope=read_write
+    private function build_stripe_connect_url( ) {
         $authorize_url          = "https://connect.stripe.com/oauth/authorize";
-        $client_id              = ( ! $mode ) ? self::get_client_id() : self::get_client_id( $mode );
-        $state                  = ( ! $mode ) ? $user_id : $user_id . '+' . $mode;
+        $client_id              = STRIPE_CONNECT_CLIENT_ID; //<-- INPUT, -or- defined in wp-config.php (most likely)
         $authorize_request_body = array(
             'client_id'     => $client_id,
             'response_type' => 'code',
-            'scope'         => 'read_write',
-            'state'         => $state
+            'scope'         => 'read_write', // FYI: if read, then we'can't make changes, like refunds, I think.
         );
-        if ( $mode ) {
-            $url = add_query_arg( $authorize_request_body, $authorize_url );
-        } else {
-            $url = $authorize_url . '?' . http_build_query( $authorize_request_body );
-        }
-
+        $url = $authorize_url . '?' . http_build_query( $authorize_request_body );
         return $url;
     }
-
-    // only here because is private in GFP_Stripe_Connect
-    static private function get_client_id( $mode = false ) {
-        $settings = get_option( 'gfp_stripe_settings' );
-        if ( ! $mode ) {
-            $mode = rgar( $settings, 'mode' );
-        }
-        $key = $mode . '_client_id';
-
-        return trim( esc_attr( rgar( $settings, $key ) ) );
-    }
-    // ============= Exact Copies from GFP_Stripe_Connect -END- ======================================================
-
 
 }
 
