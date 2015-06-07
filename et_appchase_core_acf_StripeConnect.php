@@ -5,7 +5,9 @@ Description: Lets you add a Stripe Connect button using Advanced Custom Fields. 
 Version: 1.0
 Author: JJ Rohrer
 Author URI:
-Depends: Advanced Custom Fields Pro, Gravity Forms + Stripe Connect
+Depends: Advanced Custom Fields Pro
+
+History: This no longer requires Gravity Plus
 
 Instructions:
     Make a page with slug: stripe_connect_success
